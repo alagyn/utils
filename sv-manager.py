@@ -1,6 +1,25 @@
 #!/bin/python3
 import os
 from argparse import ArgumentParser
+import subprocess as sp
+
+
+def checkStatus(name: str) -> bool:
+    return False
+
+
+class Service:
+
+    def __init__(self, name: str, enabled: bool):
+        self.name = name
+        self.enabled = enabled
+        if self.enabled:
+            self.online = checkStatus(self.name)
+        else:
+            self.online = False
+
+    def __str__(self) -> str:
+        return f'SV("{self.name}", enabled={self.enabled}, online={self.online})'
 
 
 def main():
@@ -37,11 +56,16 @@ def main():
     else:
         srcdir = args.src
 
-    availableServices = os.listdir(srcdir)
-    enabledServices = os.listdir(svdir)
+    availableServices = set(os.listdir(srcdir))
+    enabledServices = set(os.listdir(svdir))
 
-    print(availableServices)
-    print(enabledServices)
+    services: list[Service] = []
+
+    for sv in availableServices:
+        services.append(Service(sv, sv in enabledServices))
+
+    for sv in services:
+        print(sv)
 
 
 if __name__ == '__main__':
