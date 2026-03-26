@@ -2,10 +2,51 @@
 import os
 from argparse import ArgumentParser
 import subprocess as sp
+import re
+import curses
+
+STATUS_RE = re.compile(
+    r'(?P<status>(run)|(down)): (?P<name>[\w-]+):( \(pid (?P<pid>\d+)\))? (?P<runtime>\d+)s(, (?P<info>[\w\s,]+))?'
+)
+
+# TODO rework all sp calls to use svdir and svsrc
 
 
-def checkStatus(name: str) -> bool:
-    return False
+class Status:
+
+    def __init__(self, status: str, name: str, pid: int, uptime: int, info: str) -> None:
+        self.status = status
+        self.name = name
+        self.pid = pid
+        self.uptime = uptime
+        self.info = info
+
+    def __str__(self) -> str:
+        return f'STATUS("{self.name}", pid={self.pid}, uptime={self.uptime}, info="{self.info}")'
+
+
+def checkStatus(name: str) -> list[Status]:
+    ret = sp.run(["sv", "status", name], capture_output=True)
+
+    out: list[Status] = []
+
+    for sv in ret.stdout.decode().split(";"):
+        m = STATUS_RE.fullmatch(sv.strip())
+        if m is None:
+            # TODO
+            print(f"Failed to parse status: '{sv}'")
+            continue
+        out.append(
+            Status(
+                m.group("status"),
+                m.group("name"),
+                int(m.group("pid") or 0),
+                int(m.group("runtime")),
+                m.group("info") or ""
+            )
+        )
+
+    return out
 
 
 class Service:
@@ -13,27 +54,89 @@ class Service:
     def __init__(self, name: str, enabled: bool):
         self.name = name
         self.enabled = enabled
+        self.status = []
+        self.checkStatus()
+
+    def checkStatus(self):
         if self.enabled:
-            self.online = checkStatus(self.name)
+            self.status = checkStatus(self.name)
         else:
-            self.online = False
+            self.status = [Status("off", self.name, 0, 0, "")]
 
     def __str__(self) -> str:
-        return f'SV("{self.name}", enabled={self.enabled}, online={self.online})'
+        return f'SV("{self.name}", enabled={self.enabled}, status={self.status[0]})'
 
 
-def main():
+ACTION_ENABLE = 0
+ACTION_RUN = 1
+MAX_OPTIONS = 2
+
+OPT_NO = 0
+OPT_YES = 1
+
+
+def showYesNo(text: str) -> bool:
+    width = len(text) + 2
+    height = 4
+    win = curses.newwin(height, width, curses.LINES // 2 - height // 2, curses.COLS // 2 - width // 2)
+    win.border()
+    win.keypad(True)
+    selectedOpt = 0
+    out = False
+    while True:
+        win.move(1, 1)
+        win.addstr(text)
+        attrs = curses.A_BOLD
+        if selectedOpt == OPT_NO:
+            attrs |= curses.A_UNDERLINE
+
+        win.move(2, width // 2 - 3)
+        win.addstr("No", attrs)
+
+        attrs = curses.A_BOLD
+        if selectedOpt == OPT_YES:
+            attrs |= curses.A_UNDERLINE
+
+        win.move(2, width // 2)
+        win.addstr("Yes", attrs)
+
+        c = win.getch()
+        if c == ord("n"):
+            break
+        elif c == ord("y"):
+            out = True
+            break
+        elif c in (curses.KEY_LEFT, curses.KEY_RIGHT, curses.KEY_UP, curses.KEY_DOWN):
+            selectedOpt = (selectedOpt + 1) % 2
+        elif c in (ord('\n'), curses.KEY_ENTER):
+            out = selectedOpt == OPT_YES
+            break
+    win.clear()
+    return out
+
+
+def processAction(service: Service, action: int):
+    if action == ACTION_ENABLE:
+        # TODO
+        pass
+    elif action == ACTION_RUN:
+        if not service.enabled:
+            return
+        startup = service.status[0].status == "down"
+        if showYesNo(f"{'Start' if startup else 'Stop'} service {service.name}?"):
+            cmd = "up" if startup else "down"
+            sp.run(["sv", cmd, service.name])
+
+
+def main(stdscr: curses.window) -> int:
     parser = ArgumentParser()
     parser.add_argument(
-        "--svdir",
-        required=False,
-        help="Service dir to use, defaults to $SVDIR if unspecified, or the cwd"
+        "--svdir", required=False, help="Service dir to use, defaults to $SVDIR if unspecified, or the cwd"
     )
     parser.add_argument(
         "--src",
         required=False,
-        help=
-        "Directory of service folders that can be symlinked to svdir, defaults to $SVSRC if unspecified"
+        help="Directory of service folders that can be symlinked to svdir, defaults to $SVSRC if unspecified"
     )
 
     args = parser.parse_args()
@@ -56,17 +159,109 @@ def main():
     else:
         srcdir = args.src
 
-    availableServices = set(os.listdir(srcdir))
+    availableServices = os.listdir(srcdir)
     enabledServices = set(os.listdir(svdir))
 
     services: list[Service] = []
 
     for sv in availableServices:
+        if sv.startswith("."):
+            continue
         services.append(Service(sv, sv in enabledServices))
 
     for sv in services:
         print(sv)
 
+    curses.curs_set(False)
+
+    selectedSv = 0
+    drawStart = 0
+
+    curses.use_default_colors()
+    curses.halfdelay(5)
+
+    GREEN = 1
+    curses.init_pair(GREEN, curses.COLOR_GREEN, -1)
+    RED = 2
+    curses.init_pair(RED, curses.COLOR_RED, -1)
+
+    selectedAct = ACTION_RUN
+
+    try:
+        while True:
+            stdscr.move(0, 0)
+            drawEnd = drawStart + curses.LINES - 1
+            for i in range(curses.LINES - 1):
+                stdscr.clrtoeol()
+                y, x = stdscr.getyx()
+                idx = drawStart + i
+
+                if idx >= len(services):
+                    break
+                if idx == selectedSv:
+                    stdscr.addstr(">")
+                else:
+                    stdscr.addstr(" ")
+                stdscr.addch(" ")
+                sv = services[idx]
+                sv.checkStatus()
+                stdscr.addstr(sv.name)
+                stdscr.move(y, 30)
+                attrs = curses.A_BOLD
+                if idx == selectedSv and selectedAct == ACTION_ENABLE:
+                    attrs |= curses.A_UNDERLINE
+
+                if sv.enabled:
+                    stdscr.addstr("Enabled", curses.color_pair(GREEN) | attrs)
+                else:
+                    stdscr.addstr("Disabled", curses.color_pair(RED) | attrs)
+                stdscr.move(y, 40)
+
+                attrs = curses.A_BOLD
+                if idx == selectedSv and selectedAct == ACTION_RUN:
+                    attrs |= curses.A_UNDERLINE
+
+                if sv.status[0].status == "run":
+                    stdscr.addstr(sv.status[0].status, curses.color_pair(GREEN) | attrs)
+                else:
+                    stdscr.addstr(sv.status[0].status, curses.color_pair(RED) | attrs)
+
+                stdscr.move(y, 45)
+                stdscr.addstr(str(sv.status[0].uptime))
+                stdscr.addstr("s ")
+                stdscr.addstr(sv.status[0].info)
+
+                stdscr.move(y + 1, 0)
+
+            c = stdscr.getch()
+            if c == ord('q'):
+                break
+            elif c == curses.KEY_DOWN:
+                selectedSv = min(len(services) - 1, selectedSv + 1)
+            elif c == curses.KEY_UP:
+                selectedSv = max(0, selectedSv - 1)
+            elif c == curses.KEY_LEFT:
+                selectedAct = (selectedAct - 1) % MAX_OPTIONS
+            elif c == curses.KEY_RIGHT:
+                selectedAct = (selectedAct + 1) % MAX_OPTIONS
+            elif c == curses.KEY_ENTER or c == ord("\n"):
+                processAction(services[selectedSv], selectedAct)
+                stdscr.clear()
+
+            if selectedSv >= drawEnd:
+                drawEnd += 1
+                drawStart += 1
+                stdscr.clear()
+            elif selectedSv < drawStart:
+                drawStart -= 1
+                drawEnd -= 1
+                stdscr.clear()
+
+    except KeyboardInterrupt:
+        pass
+
+    return 0
+
 
 if __name__ == '__main__':
-    exit(main())
+    curses.wrapper(main)
