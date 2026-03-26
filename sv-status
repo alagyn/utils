@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Change to runit sv dir
+cd $SVDIR
+
+for s in ./*
+do
+    sv status $s
+done
