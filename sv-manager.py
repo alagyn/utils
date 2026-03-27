@@ -228,19 +228,32 @@ def main(stdscr: curses.window) -> int:
                     stdscr.addstr("Disabled", curses.color_pair(RED) | attrs)
                 stdscr.move(y, 36)
 
+                mainStatus = sv.status[0]
+
                 attrs = 0
                 if idx == selectedSv and selectedAct == ACTION_RUN:
                     attrs |= curses.A_BOLD | curses.A_UNDERLINE
 
-                if sv.status[0].status == "run":
-                    stdscr.addstr(sv.status[0].status, curses.color_pair(GREEN) | attrs)
+                if mainStatus.status == "run":
+                    stdscr.addstr(mainStatus.status, curses.color_pair(GREEN) | attrs)
                 else:
-                    stdscr.addstr(sv.status[0].status, curses.color_pair(RED) | attrs)
+                    stdscr.addstr(mainStatus.status, curses.color_pair(RED) | attrs)
 
                 stdscr.move(y, 41)
-                stdscr.addstr(str(sv.status[0].uptime))
+                stdscr.addstr(str(mainStatus.uptime))
                 stdscr.addstr("s ")
-                stdscr.addstr(sv.status[0].info)
+                stdscr.addstr(mainStatus.info)
+
+                if len(sv.status) > 1:
+                    logStatus = sv.status[1]
+                    stdscr.move(y, 50)
+                    stdscr.addstr("log: ")
+                    if logStatus.status == "run":
+                        stdscr.addstr(logStatus.status, curses.color_pair(GREEN))
+                    else:
+                        stdscr.addstr(logStatus.status, curses.color_pair(RED))
+
+                    stdscr.addstr(f" {logStatus.uptime}s")
 
                 stdscr.move(y + 1, 1)
 
