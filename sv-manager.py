@@ -10,8 +10,6 @@ STATUS_RE = re.compile(
     r'(?P<status>(run)|(down)|(fail)): (?P<name>[/\w-]+):( \(pid (?P<pid>\d+)\))? (?P<runtime>\d+)s(, (?P<info>[\w\s,]+))?'
 )
 
-# TODO rework all sp calls to use svdir and svsrc
-
 
 class Status:
 
@@ -196,9 +194,11 @@ def main(stdscr: curses.window) -> int:
 
     selectedAct = ACTION_RUN
 
+    stdscr.border()
+
     try:
         while True:
-            stdscr.move(0, 0)
+            stdscr.move(1, 1)
             drawEnd = drawStart + curses.LINES - 1
             for i in range(curses.LINES - 1):
                 stdscr.clrtoeol()
@@ -209,39 +209,42 @@ def main(stdscr: curses.window) -> int:
                     break
                 if idx == selectedSv:
                     stdscr.addstr(">")
+                    attrs = curses.A_BOLD | curses.A_UNDERLINE
                 else:
                     stdscr.addstr(" ")
+                    attrs = 0
                 stdscr.addch(" ")
                 sv = services[idx]
                 sv.checkStatus()
-                stdscr.addstr(sv.name)
-                stdscr.move(y, 30)
-                attrs = curses.A_BOLD
+                stdscr.addstr(sv.name, attrs)
+                stdscr.move(y, 26)
+                attrs = 0
                 if idx == selectedSv and selectedAct == ACTION_ENABLE:
-                    attrs |= curses.A_UNDERLINE
+                    attrs |= curses.A_BOLD | curses.A_UNDERLINE
 
                 if sv.enabled:
                     stdscr.addstr("Enabled", curses.color_pair(GREEN) | attrs)
                 else:
                     stdscr.addstr("Disabled", curses.color_pair(RED) | attrs)
-                stdscr.move(y, 40)
+                stdscr.move(y, 36)
 
-                attrs = curses.A_BOLD
+                attrs = 0
                 if idx == selectedSv and selectedAct == ACTION_RUN:
-                    attrs |= curses.A_UNDERLINE
+                    attrs |= curses.A_BOLD | curses.A_UNDERLINE
 
                 if sv.status[0].status == "run":
                     stdscr.addstr(sv.status[0].status, curses.color_pair(GREEN) | attrs)
                 else:
                     stdscr.addstr(sv.status[0].status, curses.color_pair(RED) | attrs)
 
-                stdscr.move(y, 45)
+                stdscr.move(y, 41)
                 stdscr.addstr(str(sv.status[0].uptime))
                 stdscr.addstr("s ")
                 stdscr.addstr(sv.status[0].info)
 
-                stdscr.move(y + 1, 0)
+                stdscr.move(y + 1, 1)
 
+            stdscr.border()
             c = stdscr.getch()
             if c == ord('q'):
                 break
