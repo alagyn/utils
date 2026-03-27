@@ -4,9 +4,10 @@ from argparse import ArgumentParser
 import subprocess as sp
 import re
 import curses
+import sys
 
 STATUS_RE = re.compile(
-    r'(?P<status>(run)|(down)): (?P<name>[\w-]+):( \(pid (?P<pid>\d+)\))? (?P<runtime>\d+)s(, (?P<info>[\w\s,]+))?'
+    r'(?P<status>(run)|(down)|(fail)): (?P<name>[/\w-]+):( \(pid (?P<pid>\d+)\))? (?P<runtime>\d+)s(, (?P<info>[\w\s,]+))?'
 )
 
 # TODO rework all sp calls to use svdir and svsrc
@@ -14,54 +15,58 @@ STATUS_RE = re.compile(
 
 class Status:
 
-    def __init__(self, status: str, name: str, pid: int, uptime: int, info: str) -> None:
+    def __init__(self, status: str, pid: int, uptime: int, info: str) -> None:
         self.status = status
-        self.name = name
         self.pid = pid
         self.uptime = uptime
         self.info = info
 
     def __str__(self) -> str:
-        return f'STATUS("{self.name}", pid={self.pid}, uptime={self.uptime}, info="{self.info}")'
+        return f'STATUS(pid={self.pid}, uptime={self.uptime}, info="{self.info}")'
 
 
-def checkStatus(name: str) -> list[Status]:
-    ret = sp.run(["sv", "status", name], capture_output=True)
+def checkStatus(link: str) -> list[Status]:
+    if not os.path.islink(link):
+        return [Status("off", 0, 0, "")]
+
+    ret = sp.run(["sv", "status", link], capture_output=True)
+    if ret.returncode in (2, 151):
+        return [Status("off", 0, 0, "")]
 
     out: list[Status] = []
 
     for sv in ret.stdout.decode().split(";"):
         m = STATUS_RE.fullmatch(sv.strip())
         if m is None:
-            # TODO
-            print(f"Failed to parse status: '{sv}'")
             continue
-        out.append(
-            Status(
-                m.group("status"),
-                m.group("name"),
-                int(m.group("pid") or 0),
-                int(m.group("runtime")),
-                m.group("info") or ""
-            )
-        )
+        out.append(Status(m.group("status"), int(m.group("pid") or 0), int(m.group("runtime")), m.group("info") or ""))
+
+    if len(out) == 0:
+        return [Status("off", 0, 0, "")]
 
     return out
 
 
 class Service:
 
-    def __init__(self, name: str, enabled: bool):
+    def __init__(self, name: str, path: str, link: str):
         self.name = name
-        self.enabled = enabled
+        self.path = path
+        self.link = link
+        self.enabled = os.path.exists(link)
         self.status = []
         self.checkStatus()
 
     def checkStatus(self):
-        if self.enabled:
-            self.status = checkStatus(self.name)
-        else:
-            self.status = [Status("off", self.name, 0, 0, "")]
+        self.status = checkStatus(self.link)
+        self.enabled = self.status[0].status in ("run", "down")
+
+    def disable(self):
+        if os.path.exists(self.link) and os.path.islink(self.link):
+            os.remove(self.link)
+
+    def enable(self):
+        os.symlink(self.path, self.link)
 
     def __str__(self) -> str:
         return f'SV("{self.name}", enabled={self.enabled}, status={self.status[0]})'
@@ -116,15 +121,17 @@ def showYesNo(text: str) -> bool:
 
 
 def processAction(service: Service, action: int):
-    if action == ACTION_ENABLE:
-        # TODO
-        pass
+    if action == ACTION_ENABLE or not service.enabled:
+        if showYesNo(f"{'Disable' if service.enabled else 'Enable'} service {service.name}?"):
+            if service.enabled:
+                service.disable()
+            else:
+                service.enable()
+
     elif action == ACTION_RUN:
-        if not service.enabled:
-            return
-        startup = service.status[0].status == "down"
-        if showYesNo(f"{'Start' if startup else 'Stop'} service {service.name}?"):
-            cmd = "up" if startup else "down"
+        offline = service.status[0].status == "down"
+        if showYesNo(f"{'Start' if offline else 'Stop'} service {service.name}?"):
+            cmd = "up" if offline else "down"
             sp.run(["sv", cmd, service.name])
 
 
@@ -167,7 +174,9 @@ def main(stdscr: curses.window) -> int:
     for sv in availableServices:
         if sv.startswith("."):
             continue
-        services.append(Service(sv, sv in enabledServices))
+        path = os.path.join(srcdir, sv)
+        link = os.path.join(svdir, sv)
+        services.append(Service(sv, path, link))
 
     for sv in services:
         print(sv)
