@@ -244,7 +244,7 @@ class LerpTest:
         im.SetCursorScreenPos(im.Vec2(startPos.x, satCircleCenter.y + CIRCLE_RADIUS + 10))
         im.Dummy(im.Vec2())
 
-    def render(self) -> bool:
+    def render(self, _) -> bool:
         if im.Begin("Settings"):
             im.SetNextItemWidth(100)
             im.InputInt("Num Vals", self.numVals)
