@@ -21,7 +21,10 @@ receivingEmail = None
 
 with open("/etc/bdd/raid_relay.env", mode="r") as f:
     for line in f:
-        key, val = line.strip().split()
+        line = line.strip()
+        if len(line) == 0 or line.startswith("#"):
+            continue
+        key, val = line.split('=')
         match key:
             case 'SENDER':
                 sendingEmail = val
@@ -35,13 +38,12 @@ with open("/etc/bdd/raid_relay.env", mode="r") as f:
 if sendingEmail is None or sendingPass is None or receivingEmail is None:
     exit(1)
 
-if event in ("Fail", "FailSpare", "DegradedArray", "SparesMissing"):
-    email = MIMEText(f"An error has been detected\n{event}\n{mdDev}\n{subDev if subDev is not None else ''}")
-    now = datetime.datetime.now()
-    email["Subject"] = f'RAID Alert {now.isoformat()}'
-    try:
-        with smtplib.SMTP_SSL(remoteServer, remotePort) as serv:
-            serv.login(sendingEmail, sendingPass)
-            serv.sendmail(sendingEmail, receivingEmail, email.as_string())
-    except Exception as e:
-        print(e)
+email = MIMEText(f"An event has been detected\n{event}\n{mdDev}\n{subDev if subDev is not None else ''}")
+now = datetime.datetime.now()
+email["Subject"] = f'RAID Alert {now.isoformat()}'
+try:
+    with smtplib.SMTP_SSL(remoteServer, remotePort) as serv:
+        serv.login(sendingEmail, sendingPass)
+        serv.sendmail(sendingEmail, receivingEmail, email.as_string())
+except Exception as e:
+    print(e)
